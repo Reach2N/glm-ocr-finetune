@@ -1,0 +1,10 @@
+
+unsloth
+git+https://github.com/huggingface/transformers.git
+datasets
+trl
+torch
+accelerate
+wandb
+peft
+bitsandbytes
