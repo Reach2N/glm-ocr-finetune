@@ -59,12 +59,13 @@ def run_ocr(model, processor, image_path: str, prompt: str = "Text Recognition:"
         padding=True,
     ).to(model.device)
 
-    # Generate
+    # Generate with repetition penalty to prevent loops
     with torch.no_grad():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=256,  # Allow more for longer documents
             do_sample=False,
+            repetition_penalty=1.2,  # Penalize repetition
             pad_token_id=processor.tokenizer.pad_token_id,
             eos_token_id=processor.tokenizer.eos_token_id,
         )
