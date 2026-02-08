@@ -59,11 +59,13 @@ def transform_fn(batch):
 
 train_dataset = dataset.with_transform(transform_fn)
 
-# Custom collator (from train.py)
+# Custom collator (from train.py) - masks up to </think>
 class VLMDataCollator:
-    def __init__(self, processor, assistant_token_id: int):
+    def __init__(self, processor, assistant_token_id: int, think_token_id: int, think_end_token_id: int):
         self.processor = processor
         self.assistant_token_id = assistant_token_id
+        self.think_token_id = think_token_id
+        self.think_end_token_id = think_end_token_id
 
     def __call__(self, features):
         images_list = []
@@ -97,11 +99,20 @@ class VLMDataCollator:
         labels = batch["input_ids"].clone()
 
         for i, input_ids in enumerate(batch["input_ids"]):
-            assistant_positions = (input_ids == self.assistant_token_id).nonzero(as_tuple=True)[0]
+            # Mask everything up to and including </think>
+            think_end_positions = (input_ids == self.think_end_token_id).nonzero(as_tuple=True)[0]
 
-            if len(assistant_positions) > 0:
-                last_assistant_pos = assistant_positions[-1].item()
-                labels[i, :last_assistant_pos + 1] = -100
+            if len(think_end_positions) > 0:
+                last_think_end_pos = think_end_positions[-1].item()
+                # Mask up to </think> + 1 (for newline after it)
+                mask_end = min(last_think_end_pos + 2, len(input_ids))
+                labels[i, :mask_end] = -100
+            else:
+                # Fallback
+                assistant_positions = (input_ids == self.assistant_token_id).nonzero(as_tuple=True)[0]
+                if len(assistant_positions) > 0:
+                    last_assistant_pos = assistant_positions[-1].item()
+                    labels[i, :last_assistant_pos + 1] = -100
 
             pad_token_id = self.processor.tokenizer.pad_token_id
             if pad_token_id is not None:
@@ -111,13 +122,16 @@ class VLMDataCollator:
         return batch
 
 
-print("\n3. Getting assistant token ID...")
-assistant_token = "<|assistant|>"
-assistant_token_id = processor.tokenizer.convert_tokens_to_ids(assistant_token)
+print("\n3. Getting token IDs...")
+assistant_token_id = processor.tokenizer.convert_tokens_to_ids("<|assistant|>")
+think_token_id = processor.tokenizer.convert_tokens_to_ids("<think>")
+think_end_token_id = processor.tokenizer.convert_tokens_to_ids("</think>")
 print(f"<|assistant|> token ID: {assistant_token_id}")
+print(f"<think> token ID: {think_token_id}")
+print(f"</think> token ID: {think_end_token_id}")
 
 print("\n4. Creating custom collator...")
-data_collator = VLMDataCollator(processor, assistant_token_id)
+data_collator = VLMDataCollator(processor, assistant_token_id, think_token_id, think_end_token_id)
 
 print("\n5. Creating SFTTrainer with custom collator...")
 config = SFTConfig(

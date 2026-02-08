@@ -15,9 +15,11 @@ class VLMDataCollator:
     causing the model to learn to predict prompts instead of just responses.
     """
 
-    def __init__(self, processor, assistant_token_id: int):
+    def __init__(self, processor, assistant_token_id: int, think_token_id: int, think_end_token_id: int):
         self.processor = processor
         self.assistant_token_id = assistant_token_id
+        self.think_token_id = think_token_id
+        self.think_end_token_id = think_end_token_id
 
     def __call__(self, features):
         # Separate images and messages
@@ -53,17 +55,26 @@ class VLMDataCollator:
         )
 
         # Create labels with proper masking
-        # Mask everything before and including <|assistant|> token
         labels = batch["input_ids"].clone()
 
         for i, input_ids in enumerate(batch["input_ids"]):
-            # Find the position of <|assistant|> token
-            assistant_positions = (input_ids == self.assistant_token_id).nonzero(as_tuple=True)[0]
+            # Find the position of </think> token - mask everything up to and including it
+            # This ensures the model only learns to generate actual OCR text
+            think_end_positions = (input_ids == self.think_end_token_id).nonzero(as_tuple=True)[0]
 
-            if len(assistant_positions) > 0:
-                # Mask everything up to and including the last <|assistant|> token
-                last_assistant_pos = assistant_positions[-1].item()
-                labels[i, :last_assistant_pos + 1] = -100
+            if len(think_end_positions) > 0:
+                # Mask everything up to and including </think>
+                # Also mask the newline after </think>
+                last_think_end_pos = think_end_positions[-1].item()
+                # Mask up to </think> + 1 (for the newline after it)
+                mask_end = min(last_think_end_pos + 2, len(input_ids))
+                labels[i, :mask_end] = -100
+            else:
+                # Fallback: mask up to <|assistant|>
+                assistant_positions = (input_ids == self.assistant_token_id).nonzero(as_tuple=True)[0]
+                if len(assistant_positions) > 0:
+                    last_assistant_pos = assistant_positions[-1].item()
+                    labels[i, :last_assistant_pos + 1] = -100
 
             # Also mask padding tokens
             if hasattr(self.processor, 'tokenizer'):
@@ -107,12 +118,14 @@ def create_trainer(
             training_args.bf16 = False
             training_args.fp16 = True
 
-    # Get the <|assistant|> token ID for label masking
-    assistant_token = "<|assistant|>"
-    assistant_token_id = processor.tokenizer.convert_tokens_to_ids(assistant_token)
+    # Get token IDs for label masking
+    assistant_token_id = processor.tokenizer.convert_tokens_to_ids("<|assistant|>")
+    think_token_id = processor.tokenizer.convert_tokens_to_ids("<think>")
+    think_end_token_id = processor.tokenizer.convert_tokens_to_ids("</think>")
 
     # Create custom collator that properly masks labels
-    data_collator = VLMDataCollator(processor, assistant_token_id)
+    # Masks everything up to and including </think> so model only learns OCR text
+    data_collator = VLMDataCollator(processor, assistant_token_id, think_token_id, think_end_token_id)
 
     return SFTTrainer(
         model=model,
