@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Inference script for GLM-OCR.
 
-Based on official GLM-OCR usage from:
-https://huggingface.co/zai-org/GLM-OCR
+Uses the same image processing approach as training.
 """
 
 import argparse
@@ -26,41 +25,62 @@ def load_model(model_path: str, device_map: str = "auto"):
 
 
 def run_ocr(model, processor, image_path: str, prompt: str = "Text Recognition:") -> str:
-    """Run OCR on a single image using official GLM-OCR API."""
-    # Build messages - official format from GLM-OCR README
+    """Run OCR using the same format as training."""
+    # Load image
+    image = Image.open(image_path).convert("RGB")
+
+    # Build messages with image placeholder (same as training)
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "image", "url": image_path},
+                {"type": "image"},
                 {"type": "text", "text": prompt},
             ],
         }
     ]
 
-    # Official API: apply_chat_template with tokenize=True, return_dict=True
-    inputs = processor.apply_chat_template(
+    # Get text with image placeholders
+    # CRITICAL: enable_thinking=False to match training format
+    # Training adds <think></think> before assistant content,
+    # so inference must also include it via enable_thinking=False
+    text = processor.apply_chat_template(
         messages,
-        tokenize=True,
+        tokenize=False,
         add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    ).to(model.device)
+        enable_thinking=False,
+    )
 
-    # Remove token_type_ids if present (as per official example)
-    inputs.pop("token_type_ids", None)
+    # Process text AND image together (same as training collator)
+    inputs = processor(
+        images=[image],
+        text=[text],
+        return_tensors="pt",
+        padding=True,
+    ).to(model.device)
 
     # Generate
     with torch.no_grad():
-        generated_ids = model.generate(**inputs, max_new_tokens=8192)
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=512,
+            do_sample=False,
+            pad_token_id=processor.tokenizer.pad_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
+        )
 
     # Decode only generated tokens
-    output_text = processor.decode(
-        generated_ids[0][inputs["input_ids"].shape[1]:],
+    input_len = inputs["input_ids"].shape[1]
+    result = processor.decode(
+        generated_ids[0][input_len:],
         skip_special_tokens=True,
     )
 
-    return output_text
+    # Clean up thinking tags
+    if "</think>" in result:
+        result = result.split("</think>")[-1].strip()
+
+    return result
 
 
 def main():

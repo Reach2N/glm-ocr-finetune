@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Test script to evaluate GLM-OCR model on dataset samples.
 
-Uses official GLM-OCR API from:
-https://huggingface.co/zai-org/GLM-OCR
+Uses the same image processing approach as training.
 """
 
 import argparse
@@ -28,49 +27,59 @@ def load_model(model_path: str, device_map: str = "auto"):
 
 
 def run_ocr(model, processor, image: Image.Image, prompt: str = "Text Recognition:") -> str:
-    """Run OCR using official GLM-OCR API pattern."""
-    # Save image temporarily for URL-based API
-    import tempfile
-    import os
+    """Run OCR using the same format as training."""
+    # Build messages with image placeholder (same as training)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
 
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        image.save(f, format="PNG")
-        temp_path = f.name
+    # Get text with image placeholders
+    # CRITICAL: enable_thinking=False to match training format
+    # Training adds <think></think> before assistant content,
+    # so inference must also include it via enable_thinking=False
+    text = processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
 
-    try:
-        # Official GLM-OCR message format
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "url": temp_path},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+    # Process text AND image together (same as training collator)
+    inputs = processor(
+        images=[image],
+        text=[text],
+        return_tensors="pt",
+        padding=True,
+    ).to(model.device)
 
-        # Official API: apply_chat_template with tokenize=True
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(model.device)
-
-        inputs.pop("token_type_ids", None)
-
-        with torch.no_grad():
-            generated_ids = model.generate(**inputs, max_new_tokens=512)
-
-        result = processor.decode(
-            generated_ids[0][inputs["input_ids"].shape[1]:],
-            skip_special_tokens=True,
+    # Generate
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=256,
+            do_sample=False,
+            pad_token_id=processor.tokenizer.pad_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
         )
-        return result
 
-    finally:
-        os.unlink(temp_path)
+    # Decode only generated tokens
+    input_len = inputs["input_ids"].shape[1]
+    result = processor.decode(
+        generated_ids[0][input_len:],
+        skip_special_tokens=True,
+    )
+
+    # Clean up thinking tags
+    if "</think>" in result:
+        result = result.split("</think>")[-1].strip()
+
+    return result
 
 
 def compute_cer(pred: str, target: str) -> float:
@@ -78,7 +87,6 @@ def compute_cer(pred: str, target: str) -> float:
     if len(target) == 0:
         return 0.0 if len(pred) == 0 else 1.0
 
-    # Simple edit distance
     m, n = len(target), len(pred)
     dp = [[0] * (n + 1) for _ in range(m + 1)]
 
@@ -113,6 +121,11 @@ def main():
     print(f"Loading dataset: {args.dataset}")
     dataset = load_dataset(args.dataset, split=args.split)
 
+    # Detect column names
+    text_col = "text" if "text" in dataset.column_names else "label"
+    image_col = "image" if "image" in dataset.column_names else "images"
+    print(f"Using columns: image='{image_col}', text='{text_col}'")
+
     random.seed(args.seed)
     indices = random.sample(range(len(dataset)), min(args.num_samples, len(dataset)))
 
@@ -121,11 +134,11 @@ def main():
     total_cer = 0.0
     for i, idx in enumerate(indices):
         sample = dataset[idx]
-        image = sample["image"]
+        image = sample[image_col]
         if not isinstance(image, Image.Image):
             image = Image.open(image).convert("RGB")
 
-        label = sample.get("label") or sample.get("text") or sample.get("ground_truth") or ""
+        label = sample.get(text_col, "")
         pred = run_ocr(model, processor, image, args.prompt)
         cer = compute_cer(pred, label)
         total_cer += cer

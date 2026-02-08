@@ -18,32 +18,8 @@ from glm_ocr_finetune import (
     TrainingArguments,
     load_model,
     create_trainer,
+    format_for_vlm,
 )
-
-
-def format_sample(sample, prompt="Text Recognition:"):
-    """Format a single sample for GLM-OCR VLM training."""
-    label = sample.get("label") or sample.get("text") or sample.get("ground_truth") or ""
-    image = sample.get("image")
-
-    return {
-        "images": [image] if image is not None else [],
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt},
-                ],
-            },
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": str(label)},
-                ],
-            },
-        ],
-    }
 
 
 def main():
@@ -83,7 +59,7 @@ def main():
     if data_args.dry_run:
         print("\n--- Dry run: validating format ---")
         sample = train_raw[0]
-        formatted = format_sample(sample, data_args.prompt)
+        formatted = format_for_vlm(sample, data_args.prompt)
         print(f"Images: {len(formatted['images'])} image(s)")
         print(f"Messages: {formatted['messages']}")
 
@@ -111,7 +87,7 @@ def main():
         results = {"images": [], "messages": []}
         for i in range(len(batch["image"])):
             sample = {k: batch[k][i] for k in batch.keys()}
-            formatted = format_sample(sample, data_args.prompt)
+            formatted = format_for_vlm(sample, data_args.prompt)
             results["images"].append(formatted["images"])
             results["messages"].append(formatted["messages"])
         return results
