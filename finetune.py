@@ -29,13 +29,25 @@ def main():
     if data_args.dataset_name is None:
         parser.error("--dataset_name is required")
 
+    # Override learning rate for LoRA if user didn't set it explicitly
+    # Official guide: 1e-4 for LoRA, 1e-5 for full
+    if model_args.use_lora and training_args.learning_rate == 1e-5:
+        training_args.learning_rate = 1e-4
+
     print("Loading model...")
     model, processor = load_model(
         model_args.model_name,
-        model_args.load_in_4bit,
-        model_args.full_finetuning,
+        load_in_4bit=model_args.load_in_4bit,
+        freeze_vision_tower=model_args.freeze_vision_tower,
+        freeze_multi_modal_projector=model_args.freeze_multi_modal_projector,
+        use_lora=model_args.use_lora,
+        lora_rank=model_args.lora_rank,
+        lora_target=model_args.lora_target,
     )
-    print(f"Model loaded. Params: {sum(p.numel() for p in model.parameters()):,}")
+
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model loaded. Total: {total:,} | Trainable: {trainable:,} ({100*trainable/total:.1f}%)")
 
     # Load dataset
     print(f"Loading dataset: {data_args.dataset_name}")
@@ -63,7 +75,6 @@ def main():
         print(f"Images: {len(formatted['images'])} image(s)")
         print(f"Messages: {formatted['messages']}")
 
-        # Test apply_chat_template with the image
         text = processor.apply_chat_template(
             formatted["messages"],
             tokenize=False,
@@ -71,19 +82,16 @@ def main():
         )
         print(f"\nChat template output:\n{text[:800]}...")
 
-        # Check for required tokens
         required = ["[gMASK]", "<sop>", "<|user|>", "<|begin_of_image|>", "<|assistant|>"]
         missing = [t for t in required if t not in text]
         if missing:
             print(f"\nWARNING: Missing tokens: {missing}")
-            print("(This might be OK if TRL injects them during collation)")
         else:
             print("\nAll required tokens present!")
         return 0
 
     # Use with_transform to format on-the-fly (avoids Arrow serialization issues)
     def transform_fn(batch):
-        """Transform batch on-the-fly."""
         results = {"images": [], "messages": []}
         for i in range(len(batch["image"])):
             sample = {k: batch[k][i] for k in batch.keys()}

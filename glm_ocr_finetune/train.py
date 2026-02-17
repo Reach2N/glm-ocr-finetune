@@ -2,7 +2,6 @@
 
 import torch
 from trl import SFTTrainer
-from transformers import DataCollatorWithPadding
 
 from .args import TrainingArguments
 

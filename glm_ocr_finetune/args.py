@@ -18,9 +18,25 @@ class ModelArguments:
         default=False,
         metadata={"help": "Use 4-bit quantization (for LoRA)"},
     )
-    full_finetuning: bool = field(
+    freeze_vision_tower: bool = field(
         default=True,
-        metadata={"help": "Enable full fine-tuning (not LoRA)"},
+        metadata={"help": "Freeze the CogViT vision encoder (recommended)"},
+    )
+    freeze_multi_modal_projector: bool = field(
+        default=True,
+        metadata={"help": "Freeze the cross-modal MLP connector (recommended)"},
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Use LoRA instead of full fine-tuning"},
+    )
+    lora_rank: int = field(
+        default=8,
+        metadata={"help": "LoRA rank (higher = more capacity, more VRAM)"},
+    )
+    lora_target: str = field(
+        default="all",
+        metadata={"help": "LoRA target modules ('all' for all linear layers)"},
     )
 
 
@@ -56,7 +72,7 @@ class DataArguments:
 
 @dataclass
 class TrainingArguments(SFTConfig):
-    """Training arguments with sensible defaults for VLM OCR fine-tuning."""
+    """Training arguments aligned with official GLM-OCR fine-tuning guide."""
 
     # Output
     output_dir: str = field(
@@ -64,21 +80,21 @@ class TrainingArguments(SFTConfig):
         metadata={"help": "Output directory for checkpoints"},
     )
 
-    # CRITICAL for VLMs: set max_length=None to avoid truncating image tokens
+    # Sequence length (matches LLaMA-Factory cutoff_len)
     max_length: Optional[int] = field(
-        default=None,
-        metadata={"help": "Max sequence length. None=no truncation (required for VLMs)"},
+        default=2048,
+        metadata={"help": "Max sequence length (matches official cutoff_len=2048)"},
     )
 
-    # Training hyperparameters
+    # Training hyperparameters (aligned with official guide)
     num_train_epochs: float = field(default=3)
-    per_device_train_batch_size: int = field(default=2)
-    per_device_eval_batch_size: int = field(default=2)
-    gradient_accumulation_steps: int = field(default=4)
-    learning_rate: float = field(default=2e-5)
-    weight_decay: float = field(default=0.01)
+    per_device_train_batch_size: int = field(default=4)
+    per_device_eval_batch_size: int = field(default=4)
+    gradient_accumulation_steps: int = field(default=2)
+    learning_rate: float = field(default=1e-5)
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
+    lr_scheduler_type: str = field(default="cosine")
 
     # Evaluation
     eval_strategy: str = field(
@@ -90,9 +106,9 @@ class TrainingArguments(SFTConfig):
         metadata={"help": "Evaluate every N steps"},
     )
 
-    # Saving based on eval metric
+    # Saving
     save_strategy: str = field(default="steps")
-    save_steps: int = field(default=100)
+    save_steps: int = field(default=500)
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(
         default=True,
