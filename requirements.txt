@@ -1,6 +1,4 @@
-
-unsloth
-git+https://github.com/huggingface/transformers.git
+transformers>=4.49.0
 datasets
 trl
 torch
