@@ -62,6 +62,10 @@ def main():
     elif data_args.eval_split_size > 0:
         splits = raw.train_test_split(test_size=data_args.eval_split_size, seed=42)
         train_raw, eval_raw = splits["train"], splits["test"]
+        # Cap eval set to avoid slow evaluation on large datasets
+        max_eval = 1000
+        if len(eval_raw) > max_eval:
+            eval_raw = eval_raw.select(range(max_eval))
         print(f"Auto-split: {len(train_raw)} train, {len(eval_raw)} eval")
     else:
         train_raw = raw
@@ -105,10 +109,15 @@ def main():
 
     print(f"Train: {len(train_raw)}, Eval: {len(eval_raw) if eval_raw else 0}")
 
-    # Disable eval if no dataset
-    if eval_dataset is None:
+    # Disable eval if no dataset, enable best-model tracking if eval exists
+    if eval_dataset is None or training_args.eval_strategy == "no":
         training_args.eval_strategy = "no"
         training_args.load_best_model_at_end = False
+        eval_dataset = None
+    else:
+        training_args.load_best_model_at_end = True
+        training_args.metric_for_best_model = "eval_loss"
+        training_args.greater_is_better = False
 
     # Create trainer
     trainer = create_trainer(

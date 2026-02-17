@@ -111,14 +111,9 @@ class TrainingArguments(SFTConfig):
     save_steps: int = field(default=500)
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(
-        default=True,
-        metadata={"help": "Load the best model at the end of training"},
+        default=False,
+        metadata={"help": "Load the best model at the end of training (requires eval)"},
     )
-    metric_for_best_model: str = field(
-        default="eval_loss",
-        metadata={"help": "Metric to use for best model selection"},
-    )
-    greater_is_better: bool = field(default=False)
 
     # Logging
     logging_steps: int = field(default=10)

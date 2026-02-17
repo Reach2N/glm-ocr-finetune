@@ -39,7 +39,7 @@ def load_model(
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
     model_kwargs = {
-        "torch_dtype": dtype,
+        "dtype": dtype,
         "device_map": device_map,
         "trust_remote_code": True,
     }
